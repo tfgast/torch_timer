@@ -1,7 +1,14 @@
 use instant::Instant;
-use std::time::Duration;
+use std::{sync::atomic::AtomicU32, time::Duration};
 
 use eframe::egui::{self, style::Spacing, Style};
+
+fn circle_icon(ui: &mut egui::Ui, openness: f32, response: &egui::Response) {
+    let stroke = ui.style().interact(response).fg_stroke;
+    let radius = egui::lerp(2.0..=3.0, openness);
+    ui.painter()
+        .circle_filled(response.rect.center(), radius, stroke.color);
+}
 
 #[derive(serde::Deserialize, serde::Serialize, Clone, Copy)]
 #[serde(from = "Duration", into = "Duration")]
@@ -32,6 +39,8 @@ struct Timer {
     state: TimerState,
     displayed_time: u64,
     local_pause: bool,
+    #[serde(skip)]
+    id: u32,
 }
 
 const BASE_TIME: u64 = 60;
@@ -44,6 +53,7 @@ impl Timer {
             state: TimerState::Paused(duration),
             displayed_time: 10,
             local_pause: false,
+            id: COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
 
@@ -55,11 +65,19 @@ impl Timer {
         }
     }
 
-    fn add_time(&mut self, removal_time: u64) {
-        let d = Duration::from_secs(removal_time * BASE_TIME);
+    fn add_time(&mut self, added_time: u64) {
+        let d = Duration::from_secs(added_time * BASE_TIME);
         match &mut self.state {
             TimerState::RunUntil(end) => *end += d,
             TimerState::Paused(duration) => *duration = duration.saturating_add(d),
+        }
+    }
+
+    fn set_time(&mut self, time: u64) {
+        let d = Duration::from_secs(time * BASE_TIME);
+        match &mut self.state {
+            TimerState::RunUntil(end) => *end = Instant::now() + d,
+            TimerState::Paused(duration) => *duration = d,
         }
     }
 
@@ -137,6 +155,8 @@ impl MyApp {
     }
 }
 
+static COUNTER: AtomicU32 = AtomicU32::new(0);
+
 impl eframe::App for MyApp {
     /// Called by the frame work to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -151,32 +171,53 @@ impl eframe::App for MyApp {
                 let mut ret = true;
                 if !time_left.is_zero() {
                     ui.horizontal(|ui| {
-                        let time = time_left.as_secs();
-                        let minutes = time / 60;
-                        let seconds = time % 60;
                         if ui.button("×").clicked() {
                             ret = false;
                         }
-                        ui.text_edit_singleline(&mut timer.name);
-                        let text_time = format!("{minutes:0>2}:{seconds:0>2}");
-                        if ui.selectable_label(!timer.local_pause, text_time).clicked() {
-                            if timer.local_pause {
-                                if self.running {
-                                    timer.start(now);
+                        ui.vertical(|ui| {
+                            let id = ui.make_persistent_id(timer.id);
+                            let mut state =
+                                egui::collapsing_header::CollapsingState::load_with_default_open(
+                                    ui.ctx(),
+                                    id,
+                                    false,
+                                );
+
+                            let header_res = ui.horizontal(|ui| {
+                                let time = time_left.as_secs();
+                                let minutes = time / 60;
+                                let seconds = time % 60;
+                                ui.text_edit_singleline(&mut timer.name);
+                                let text_time = format!("{minutes:0>2}:{seconds:0>2}");
+                                if ui.selectable_label(!timer.local_pause, text_time).clicked() {
+                                    if timer.local_pause {
+                                        if self.running {
+                                            timer.start(now);
+                                        }
+                                        timer.local_pause = false;
+                                    } else {
+                                        timer.pause(time_left);
+                                        timer.local_pause = true;
+                                    }
                                 }
-                                timer.local_pause = false;
-                            } else {
-                                timer.pause(time_left);
-                                timer.local_pause = true;
-                            }
-                        }
-                        ui.add(egui::DragValue::new(&mut timer.displayed_time));
-                        if ui.button("⏮").clicked() {
-                            timer.add_time(timer.displayed_time);
-                        }
-                        if ui.button("⏭").clicked() {
-                            timer.remove_time(timer.displayed_time);
-                        }
+                                state.show_toggle_button(ui, circle_icon);
+                            });
+
+                            state.show_body_indented(&header_res.response, ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.add(egui::DragValue::new(&mut timer.displayed_time));
+                                    if ui.button("⏮").clicked() {
+                                        timer.add_time(timer.displayed_time);
+                                    }
+                                    if ui.button("⏭").clicked() {
+                                        timer.remove_time(timer.displayed_time);
+                                    }
+                                    if ui.button("=").clicked() {
+                                        timer.set_time(timer.displayed_time);
+                                    }
+                                });
+                            });
+                        });
                     });
                 } else {
                     ui.horizontal(|ui| {
@@ -187,6 +228,17 @@ impl eframe::App for MyApp {
                     });
                 }
                 ret
+            });
+            ui.horizontal(|ui| {
+                if ui.button("+").clicked() {
+                    let mut timer = Timer::new(self.new_name.clone(), self.start_duration);
+                    if self.running {
+                        timer.start(now);
+                    }
+                    self.timers.push(timer);
+                }
+                ui.text_edit_singleline(&mut self.new_name);
+                ui.add(egui::DragValue::new(&mut self.start_duration));
             });
             ui.separator();
             if !self.timers.is_empty() {
@@ -226,17 +278,6 @@ impl eframe::App for MyApp {
                     }
                 });
             }
-            ui.horizontal(|ui| {
-                if ui.button("+").clicked() {
-                    let mut timer = Timer::new(self.new_name.clone(), self.start_duration);
-                    if self.running {
-                        timer.start(now);
-                    }
-                    self.timers.push(timer);
-                }
-                ui.text_edit_singleline(&mut self.new_name);
-                ui.add(egui::DragValue::new(&mut self.start_duration));
-            });
             ctx.request_repaint_after(std::time::Duration::from_secs(1));
         });
     }
