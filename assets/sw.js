@@ -1,4 +1,4 @@
-var cacheName = 'egui-template-pwa';
+var cacheName = 'torch_timer';
 var filesToCache = [
   './',
   './index.html',

@@ -1,6 +1,6 @@
 {
-  "name": "egui Template PWA",
-  "short_name": "egui-template-pwa",
+  "name": "Torch Timer",
+  "short_name": "torch_timer",
   "icons": [
     {
       "src": "./icon-256.png",
