@@ -26,7 +26,7 @@ impl From<Duration> for TimerState {
 impl From<TimerState> for Duration {
     fn from(val: TimerState) -> Self {
         match val {
-            TimerState::RunUntil(end) => end.duration_since(Instant::now()),
+            TimerState::RunUntil(end) => end.saturating_duration_since(Instant::now()),
             TimerState::Paused(duration) => duration,
         }
     }
@@ -82,7 +82,7 @@ impl Timer {
 
     fn time_remaining(&mut self, now: Instant) -> Duration {
         match self.state {
-            TimerState::RunUntil(end) => end.duration_since(now),
+            TimerState::RunUntil(end) => end.saturating_duration_since(now),
             TimerState::Paused(duration) => duration,
         }
     }
