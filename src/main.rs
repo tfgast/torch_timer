@@ -8,11 +8,11 @@ fn main() -> Result<(), eframe::Error> {
     tracing_subscriber::fmt::init();
 
     let options = eframe::NativeOptions {
-        initial_window_size: Some(egui::vec2(120.0, 240.0)),
+        initial_window_size: Some(egui::vec2(180.0, 240.0)),
         ..Default::default()
     };
     eframe::run_native(
-        "Timers",
+        "TorchTimer",
         options,
         Box::new(|cc| Box::new(torch_timer::MyApp::new(cc))),
     )

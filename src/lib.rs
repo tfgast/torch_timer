@@ -1,5 +1,5 @@
 use instant::Instant;
-use std::{sync::atomic::AtomicU32, time::Duration};
+use std::time::Duration;
 
 use eframe::egui::{self, style::Spacing, Style};
 
@@ -39,21 +39,20 @@ struct Timer {
     state: TimerState,
     displayed_time: u64,
     local_pause: bool,
-    #[serde(skip)]
     id: u32,
 }
 
 const BASE_TIME: u64 = 60;
 
 impl Timer {
-    fn new(name: String, duration: u64) -> Self {
+    fn new(name: String, duration: u64, id: u32) -> Self {
         let duration = Duration::from_secs(duration * BASE_TIME);
         Self {
             name,
             state: TimerState::Paused(duration),
             displayed_time: 10,
             local_pause: false,
-            id: COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            id,
         }
     }
 
@@ -105,7 +104,7 @@ impl Timer {
 
 impl Default for Timer {
     fn default() -> Self {
-        Self::new(String::new(), 60)
+        Self::new(String::new(), 60, 0)
     }
 }
 
@@ -116,6 +115,7 @@ pub struct MyApp {
     start_duration: u64,
     displayed_time: u64,
     new_name: String,
+    next_timer_id: u32,
     #[serde(skip)]
     running: bool,
 }
@@ -127,6 +127,7 @@ impl Default for MyApp {
             start_duration: 60,
             displayed_time: 10,
             new_name: "torch".to_owned(),
+            next_timer_id: 0,
             running: false,
         }
     }
@@ -154,8 +155,6 @@ impl MyApp {
         Default::default()
     }
 }
-
-static COUNTER: AtomicU32 = AtomicU32::new(0);
 
 impl eframe::App for MyApp {
     /// Called by the frame work to save state before shutdown.
@@ -231,7 +230,12 @@ impl eframe::App for MyApp {
             });
             ui.horizontal(|ui| {
                 if ui.button("+").clicked() {
-                    let mut timer = Timer::new(self.new_name.clone(), self.start_duration);
+                    let mut timer = Timer::new(
+                        self.new_name.clone(),
+                        self.start_duration,
+                        self.next_timer_id,
+                    );
+                    self.next_timer_id = self.next_timer_id.wrapping_add(1);
                     if self.running {
                         timer.start(now);
                     }
