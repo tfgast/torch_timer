@@ -40,6 +40,7 @@ struct Timer {
     displayed_time: u64,
     local_pause: bool,
     id: u32,
+    played_sound: bool,
 }
 
 const BASE_TIME: u64 = 60;
@@ -52,6 +53,7 @@ impl Timer {
             state: TimerState::Paused(duration),
             displayed_time: 10,
             local_pause: false,
+            played_sound: false,
             id,
         }
     }
@@ -108,6 +110,59 @@ impl Default for Timer {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+mod audio {
+    pub struct Audio {
+        sink: Option<rodio::Sink>,
+        _stream: Option<rodio::OutputStream>,
+    }
+
+    impl Audio {
+        pub fn new() -> Self {
+            let (sink, _stream) = if let Ok((_stream, handle)) = rodio::OutputStream::try_default()
+            {
+                if let Ok(sink) = rodio::Sink::try_new(&handle) {
+                    (Some(sink), Some(_stream))
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            };
+            Self { sink, _stream }
+        }
+
+        pub fn play(&self) {
+            if let Some(sink) = &self.sink {
+                if sink.empty() {
+                    let file = std::io::Cursor::new(
+                        include_bytes!("../assets/mixkit-wizard-fire-woosh-1326.wav").as_slice(),
+                    );
+                    let sound = rodio::Decoder::new(file).unwrap();
+                    sink.append(sound);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+mod audio {
+    pub struct Audio;
+    impl Audio {
+        pub fn new() -> Self {
+            Self
+        }
+        pub fn play(&self) {
+            if let Ok(sound) =
+                web_sys::HtmlAudioElement::new_with_src("mixkit-wizard-fire-woosh-1326.wav")
+            {
+                _ = sound.play();
+            }
+        }
+    }
+}
+
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct MyApp {
@@ -118,6 +173,8 @@ pub struct MyApp {
     next_timer_id: u32,
     #[serde(skip)]
     running: bool,
+    #[serde(skip)]
+    audio: audio::Audio,
 }
 
 impl Default for MyApp {
@@ -129,6 +186,7 @@ impl Default for MyApp {
             new_name: "torch".to_owned(),
             next_timer_id: 0,
             running: false,
+            audio: audio::Audio::new(),
         }
     }
 }
@@ -220,6 +278,10 @@ impl eframe::App for MyApp {
                     });
                 } else {
                     ui.horizontal(|ui| {
+                        if !timer.played_sound {
+                            self.audio.play();
+                            timer.played_sound = true;
+                        }
                         if ui.button("×").clicked() {
                             ret = false;
                         }
