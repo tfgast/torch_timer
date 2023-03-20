@@ -1,7 +1,7 @@
 use instant::Instant;
 use std::time::Duration;
 
-use eframe::egui::{self, style::Spacing, Style};
+use eframe::egui::{self, style::Spacing, Button, Style};
 
 fn circle_icon(ui: &mut egui::Ui, openness: f32, response: &egui::Response) {
     let stroke = ui.style().interact(response).fg_stroke;
@@ -180,7 +180,7 @@ pub struct MyApp {
 impl Default for MyApp {
     fn default() -> Self {
         Self {
-            timers: Default::default(),
+            timers: vec![Timer::new("torch".to_owned(), 60, 0)],
             start_duration: 60,
             displayed_time: 10,
             new_name: "torch".to_owned(),
@@ -223,28 +223,38 @@ impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             let now = Instant::now();
+            let mut timers_to_add = Vec::new();
+            let mut index = 0;
             self.timers.retain_mut(|timer| {
+                index += 1;
                 let time_left = timer.time_remaining(now);
                 let mut ret = true;
-                if !time_left.is_zero() {
-                    ui.horizontal(|ui| {
-                        if ui.button("×").clicked() {
-                            ret = false;
-                        }
-                        ui.vertical(|ui| {
-                            let id = ui.make_persistent_id(timer.id);
-                            let mut state =
-                                egui::collapsing_header::CollapsingState::load_with_default_open(
-                                    ui.ctx(),
-                                    id,
-                                    false,
-                                );
+                ui.horizontal(|ui| {
+                    if ui.button("×").clicked() {
+                        ret = false;
+                        index -= 1;
+                    }
+                    ui.vertical(|ui| {
+                        let id = ui.make_persistent_id(timer.id);
+                        let mut state =
+                            egui::collapsing_header::CollapsingState::load_with_default_open(
+                                ui.ctx(),
+                                id,
+                                false,
+                            );
 
-                            let header_res = ui.horizontal(|ui| {
-                                let time = time_left.as_secs();
-                                let minutes = time / 60;
-                                let seconds = time % 60;
-                                ui.text_edit_singleline(&mut timer.name);
+                        ui.horizontal(|ui| {
+                            ui.text_edit_singleline(&mut timer.name);
+                            let time = time_left.as_secs();
+                            let minutes = time / 60;
+                            let seconds = time % 60;
+                            if time_left.is_zero() {
+                                if !timer.played_sound {
+                                    self.audio.play();
+                                    timer.played_sound = true;
+                                }
+                                ui.colored_label(egui::Color32::RED, "Done   ");
+                            } else {
                                 let text_time = format!("{minutes:0>2}:{seconds:0>2}");
                                 if ui.selectable_label(!timer.local_pause, text_time).clicked() {
                                     if timer.local_pause {
@@ -257,55 +267,77 @@ impl eframe::App for MyApp {
                                         timer.local_pause = true;
                                     }
                                 }
-                                state.show_toggle_button(ui, circle_icon);
-                            });
+                            }
+                            state.show_toggle_button(ui, circle_icon);
+                        });
 
-                            state.show_body_indented(&header_res.response, ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.add(egui::DragValue::new(&mut timer.displayed_time));
-                                    if ui.button("⏮").clicked() {
-                                        timer.add_time(timer.displayed_time);
+                        let mut close = false;
+                        state.show_body_unindented(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.add(egui::DragValue::new(&mut timer.displayed_time));
+                                if ui.button("⏮").clicked() {
+                                    timer.add_time(timer.displayed_time);
+                                    if time_left.is_zero() && !timer.time_remaining(now).is_zero() {
+                                        timer.played_sound = false;
                                     }
-                                    if ui.button("⏭").clicked() {
-                                        timer.remove_time(timer.displayed_time);
+                                }
+                                if ui
+                                    .add_enabled(!time_left.is_zero(), Button::new("⏭"))
+                                    .clicked()
+                                {
+                                    timer.remove_time(timer.displayed_time);
+                                }
+                                if ui.button("=").clicked() {
+                                    timer.set_time(timer.displayed_time);
+                                }
+                            });
+                            ui.horizontal(|ui| {
+                                if ui.button("+").clicked() {
+                                    let mut timer = Timer::new(
+                                        self.new_name.clone(),
+                                        self.start_duration,
+                                        self.next_timer_id,
+                                    );
+                                    self.next_timer_id = self.next_timer_id.wrapping_add(1);
+                                    if self.running {
+                                        timer.start(now);
                                     }
-                                    if ui.button("=").clicked() {
-                                        timer.set_time(timer.displayed_time);
-                                    }
-                                });
+                                    timers_to_add.push((index, timer));
+                                    close = true;
+                                }
+                                ui.text_edit_singleline(&mut self.new_name);
+                                ui.add(egui::DragValue::new(&mut self.start_duration));
                             });
                         });
-                    });
-                } else {
-                    ui.horizontal(|ui| {
-                        if !timer.played_sound {
-                            self.audio.play();
-                            timer.played_sound = true;
+                        if close {
+                            state.set_open(false);
+                            state.store(ui.ctx());
                         }
-                        if ui.button("×").clicked() {
-                            ret = false;
-                        }
-                        ui.colored_label(egui::Color32::RED, "Done");
                     });
-                }
+                });
                 ret
             });
-            ui.horizontal(|ui| {
-                if ui.button("+").clicked() {
-                    let mut timer = Timer::new(
-                        self.new_name.clone(),
-                        self.start_duration,
-                        self.next_timer_id,
-                    );
-                    self.next_timer_id = self.next_timer_id.wrapping_add(1);
-                    if self.running {
-                        timer.start(now);
+            for (index, timer) in timers_to_add {
+                self.timers.insert(index, timer);
+            }
+            if self.timers.is_empty() {
+                ui.horizontal(|ui| {
+                    if ui.button("+").clicked() {
+                        let mut timer = Timer::new(
+                            self.new_name.clone(),
+                            self.start_duration,
+                            self.next_timer_id,
+                        );
+                        self.next_timer_id = self.next_timer_id.wrapping_add(1);
+                        if self.running {
+                            timer.start(now);
+                        }
+                        self.timers.push(timer);
                     }
-                    self.timers.push(timer);
-                }
-                ui.text_edit_singleline(&mut self.new_name);
-                ui.add(egui::DragValue::new(&mut self.start_duration));
-            });
+                    ui.text_edit_singleline(&mut self.new_name);
+                    ui.add(egui::DragValue::new(&mut self.start_duration));
+                });
+            }
             ui.separator();
             if !self.timers.is_empty() {
                 ui.horizontal(|ui| {
